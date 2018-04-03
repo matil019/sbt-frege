@@ -21,7 +21,8 @@ object SbtFregec extends AutoPlugin {
   override def requires = plugins.JvmPlugin
 
   def fregec(cp: Seq[sbt.Attributed[File]], fregeSource: File, fregeTarget: File,
-             fregeCompiler: String, fregeOptions: Seq[String])
+             fregeCompiler: String, fregeOptions: Seq[String],
+             sbtLog: Logger)
             (fregeSrcs: Set[File]): Set[File] = {
 
     val cps = cp.map(_.data).mkString(String.valueOf(File.pathSeparatorChar))
@@ -38,8 +39,10 @@ object SbtFregec extends AutoPlugin {
     ) ++ fregeOptions ++ fregeSrcs.map(_.getPath)
 
     val forkOptions: ForkOptions = new ForkOptions
+    val forkArgs = Seq("-cp", cps) ++ fregeArgs
+    sbtLog.debug("calling frege: java " + forkArgs.map(a => s"'$a'").mkString(" "))
     val fork = new Fork("java", None)
-    val result = fork(forkOptions, Seq("-cp", cps) ++ fregeArgs)
+    val result = fork(forkOptions, forkArgs)
     if (result != 0) {
       throw new RuntimeException("Frege compilation error")
     } else {
@@ -102,7 +105,8 @@ object SbtFregec extends AutoPlugin {
                  (fregeSource in scope).value,
                  (fregeTarget in scope).value,
                  (fregeCompiler in scope).value,
-                 (fregeOptions in scope).value)
+                 (fregeOptions in scope).value,
+                 (streams in scope).value.log)
         }
       cached(((fregeSource in scope).value ** "*.fr").get.toSet).toSeq
     }.taskValue
