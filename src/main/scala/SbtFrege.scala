@@ -1,6 +1,8 @@
 import sbt._
 import sbt.Keys._
 
+import scala.util.Try
+
 object SbtFregec extends AutoPlugin {
 
   object autoImport {
@@ -9,6 +11,7 @@ object SbtFregec extends AutoPlugin {
     lazy val fregeTarget   = settingKey[File]("Frege target directory")
     lazy val fregeCompiler = settingKey[String]("Full name of the Frege compiler")
     lazy val fregeLibrary  = settingKey[ModuleID]("Frege library (fregec.jar)")
+    lazy val fregeDoc      = taskKey[File]("Generate fregedoc")
   }
 
   import autoImport._
@@ -44,6 +47,50 @@ object SbtFregec extends AutoPlugin {
     }
   }
 
+  def fregedoc(cp: Seq[sbt.Attributed[File]], fregeTarget: File, fregeDoc: File): File = {
+    val cps = cp.map(_.data).mkString(String.valueOf(File.pathSeparatorChar))
+
+    fregeDoc.mkdirs()
+
+    def runDoc() = Try {
+      val fork = new Fork("java", None)
+      val result = fork(
+        new ForkOptions,
+        "-cp" :: cps :: "frege.tools.Doc" :: "-d" :: fregeDoc.toString :: fregeTarget.toString :: Nil
+      )
+      if (result != 0) {
+        throw new RuntimeException("Fregedoc error")
+      } else {
+        fregeDoc
+      }
+    }
+
+    def runMakeDocIndex() = Try {
+      val fork = new Fork("java", None)
+      val result = fork(
+        new ForkOptions,
+        "-cp" :: cps :: "frege.tools.MakeDocIndex" :: fregeDoc.toString :: Nil
+      )
+      if (result != 0) {
+        throw new RuntimeException("Fregedoc (MakeDocIndex) error")
+      } else {
+        fregeDoc
+      }
+    }
+
+    def copyIndex() = Try {
+      IO.copyFile(fregeDoc / "fregedoc.html", fregeDoc / "index.html")
+    }
+
+    val run =
+      for {
+        _ <- runDoc()
+        f <- runMakeDocIndex()
+        _ <- copyIndex()
+      } yield f
+    run.get
+  }
+
   def scopedSettings(scope: Configuration, dirName: String) = Seq(
     fregeSource in scope := (sourceDirectory in scope).value / "frege",
     fregeTarget in scope := baseDirectory.value / "target" / "frege" / dirName,
@@ -66,6 +113,13 @@ object SbtFregec extends AutoPlugin {
     scopedSettings(Test,    "test") ++
     Seq(
       fregeOptions := Seq(),
+      fregeDoc in Compile := {
+        (sources in Compile).value
+        val docdir = baseDirectory.value / "target" / "fregedoc" / "main"
+        fregedoc((managedClasspath in Compile).value ++ (dependencyClasspath in Compile).value,
+                 (fregeTarget in Compile).value,
+                 docdir)
+      },
       fregeCompiler := "frege.compiler.Main",
       watchSources := {
         watchSources.value ++
